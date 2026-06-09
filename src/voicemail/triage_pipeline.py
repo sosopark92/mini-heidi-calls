@@ -1,4 +1,6 @@
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -13,6 +15,38 @@ from src.policy.policy_router import assign_role
 _URGENCY_ORDER = {"critical": 0, "high": 1, "normal": 2, "low": 3}
 
 
+def _process_one(task: VoicemailTask, index: int, total: int, verbose: bool) -> tuple[VoicemailTask, float | None]:
+    t_start = time.perf_counter()
+    if verbose:
+        print(f"  [{index}/{total}] {task.id} ...", end=" ", flush=True)
+
+    detect_failure_cases(task)
+
+    if len(task.transcript.split()) < 5:
+        if verbose:
+            print("pocket dial — skipped")
+        return task, None
+
+    flagged = screen_for_safety(task)
+
+    if flagged:
+        check_safety_context(task)
+        if verbose:
+            print(f"safety={task.safety_state}", end=" ", flush=True)
+    else:
+        if verbose:
+            print("safety=ROUTINE", end=" ", flush=True)
+
+    extract_details(task)
+    calculate_confidence(task)
+    assign_role(task)
+
+    elapsed = time.perf_counter() - t_start
+    if verbose:
+        print(f"| intents={task.intents} | urgency={task.urgency} | confidence={task.confidence} | {elapsed:.2f}s")
+    return task, elapsed
+
+
 def run_pipeline(tasks: list[VoicemailTask], verbose: bool = True) -> list[VoicemailTask]:
     """Run the full triage pipeline on a list of VoicemailTasks.
 
@@ -23,45 +57,25 @@ def run_pipeline(tasks: list[VoicemailTask], verbose: bool = True) -> list[Voice
       4. extract_details       — LLM structured extraction (intents, urgency, summary, etc.)
       5. calculate_confidence  — computed score from observable signals
 
-    Mutates tasks in place. Returns them sorted by urgency then received_at.
+    Tasks are processed in parallel. Returns them sorted by urgency then received_at.
     """
     total = len(tasks)
-    for i, task in enumerate(tasks, 1):
-        if verbose:
-            print(f"  [{i}/{total}] {task.id} ...", end=" ", flush=True)
+    timings: list[float] = []
+    wall_start = time.perf_counter()
 
-        # Step 1 — structural failure detection (no LLM)
-        detect_failure_cases(task)
+    with ThreadPoolExecutor(max_workers=total) as executor:
+        futures = {
+            executor.submit(_process_one, task, i, total, verbose): task
+            for i, task in enumerate(tasks, 1)
+        }
+        for future in as_completed(futures):
+            _, elapsed = future.result()
+            if elapsed is not None:
+                timings.append(elapsed)
 
-        # Pocket dials have nothing to extract — skip LLM steps
-        if len(task.transcript.split()) < 5:
-            if verbose:
-                print("pocket dial — skipped")
-            continue
-
-        # Step 2 — Stage 1 safety screen
-        flagged = screen_for_safety(task)
-
-        # Step 3 — Stage 2 context check (only when Stage 1 flagged)
-        if flagged:
-            check_safety_context(task)
-            if verbose:
-                print(f"safety={task.safety_state}", end=" ", flush=True)
-        else:
-            if verbose:
-                print("safety=ROUTINE", end=" ", flush=True)
-
-        # Step 4 — LLM structured extraction
-        extract_details(task)
-
-        # Step 5 — confidence score
-        calculate_confidence(task)
-
-        # Step 6 — role assignment
-        assign_role(task)
-
-        if verbose:
-            print(f"| intents={task.intents} | urgency={task.urgency} | confidence={task.confidence}")
+    wall_elapsed = time.perf_counter() - wall_start
+    if verbose and timings:
+        print(f"\n  avg: {sum(timings)/len(timings):.2f}s/record  total(sum): {sum(timings):.1f}s  wall: {wall_elapsed:.1f}s  ({len(timings)} records timed)")
 
     # Sort: urgency (critical first), then received_at (earliest first within same urgency)
     tasks.sort(key=lambda t: (_URGENCY_ORDER.get(t.urgency, 99), t.received_at))

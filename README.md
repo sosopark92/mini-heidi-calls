@@ -77,7 +77,7 @@ LLM extraction           intents (list), urgency, summary, next_step, needs_revi
 Confidence score         4 signals × 0.25 — callback number, intent clear, transcript length
         │
         ▼
-Role assignment          clinic_policy.yaml → on_call_gp / gp / practice_manager / admin
+Role assignment          clinic_policy.yaml → on_call_gp / gp / clinic-manager / admin
         │
         ▼
 Dashboard                sorted by urgency, then call time
@@ -106,6 +106,21 @@ Safety state flows into extraction — ACTIVE forces `critical` urgency, WATCH s
 
 ---
 
+## Results
+
+10 mock records processed end-to-end.
+
+| Category                | Result                                      |
+|-------------------------|---------------------------------------------|
+| Safety classification   | 10 / 10                                     |
+| Urgency accuracy        | 10 / 10                                     |
+| Needs review flagged    | 3 / 10 — VM-001, VM-009, VM-010             |
+| Stage 2 context check triggered | 2 / 10 — VM-001 (ACTIVE), VM-002 (WATCH) |
+| Avg pipeline time       | 5.34s per record total:53.4s (10 records time)                           |
+
+---
+
+
 ## Routing Rules
 
 Defined in `src/policy/clinic_policy.yaml` — editable without touching code.
@@ -116,7 +131,7 @@ Defined in `src/policy/clinic_policy.yaml` — editable without touching code.
 | `safety_state = ACTIVE or WATCH` | GP               |
 | `urgency = high`                 | GP               |
 | `intent includes medication_concern` | GP           |
-| `intent includes complaint`      | Practice Manager |
+| `intent includes complaint`      | Clinic Manager   |
 | Everything else                  | Admin            |
 
 ---

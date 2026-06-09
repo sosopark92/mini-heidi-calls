@@ -158,7 +158,8 @@ if selected_rows:
         if task.next_step:
             st.info(f"**→ Next step:** {task.next_step}")
         if task.urgency_reason:
-            st.caption(f"Urgency reason: {task.urgency_reason}")
+            override_note = f" _(safety override: {task.safety_state})_" if task.safety_state in ("ACTIVE", "WATCH") else ""
+            st.caption(f"Urgency reason: {task.urgency_reason}{override_note}")
         with st.expander("Transcript"):
             st.text(task.transcript)
 
