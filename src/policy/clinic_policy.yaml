@@ -1,0 +1,45 @@
+clinic:
+  name: Harbour to Sunset GP
+
+# Roles used in assigned_to
+roles:
+  on_call_gp:       "On-call GP — contact immediately"
+  gp:        "GP — review before callback"
+  practice_manager: "Practice Manager"
+  admin:            "Admin"
+
+# Rules are evaluated in order. First match wins.
+# match fields:
+#   urgency        — exact match on task.urgency
+#   safety_state   — task.safety_state must be in this list
+#   any_intent     — any value in task.intents matches this
+routing_rules:
+
+  - match:
+      urgency: critical
+    assign_to: on_call_gp
+    reason: "Critical urgency — on-call GP must be contacted before clinic opens"
+
+  - match:
+      safety_state: [ACTIVE, WATCH]
+    assign_to: gp
+    reason: "Clinical concern flagged — GP should review before any callback is made"
+
+  - match:
+      urgency: high
+    assign_to: gp
+    reason: "High urgency — GP review recommended"
+
+  - match:
+      any_intent: medication_concern
+    assign_to: gp
+    reason: "Medication concern — GP should advise on response"
+
+  - match:
+      any_intent: complaint
+    assign_to: practice_manager
+    reason: "Formal complaint — escalate to practice manager"
+
+  - default: true
+    assign_to: admin
+    reason: "Routine call — admin can handle directly"

@@ -1,0 +1,12 @@
+# Environment
+.env
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Private patient data — never commit
+data/sample_transcripts/
+
+# OS
+.DS_Store
+Thumbs.db
