@@ -3,10 +3,10 @@ clinic:
 
 # Roles used in assigned_to
 roles:
-  on_call_gp:       "On-call GP — contact immediately"
-  gp:        "GP — review before callback"
-  practice_manager: "Practice Manager"
-  admin:            "Admin"
+  on_call_gp: "On-call GP — contact immediately"
+  gp: "GP — review before callback"
+  clinic-manager: "Clinic Manager"
+  admin: "Admin"
 
 # Rules are evaluated in order. First match wins.
 # match fields:
@@ -14,7 +14,6 @@ roles:
 #   safety_state   — task.safety_state must be in this list
 #   any_intent     — any value in task.intents matches this
 routing_rules:
-
   - match:
       urgency: critical
     assign_to: on_call_gp
@@ -37,8 +36,8 @@ routing_rules:
 
   - match:
       any_intent: complaint
-    assign_to: practice_manager
-    reason: "Formal complaint — escalate to practice manager"
+    assign_to: clinic-manager
+    reason: "Formal complaint — escalate to clinic manager"
 
   - default: true
     assign_to: admin

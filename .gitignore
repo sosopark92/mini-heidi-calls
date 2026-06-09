@@ -1,8 +1,10 @@
 # Environment
+.claude
 .env
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.gitignore
 
 # Private patient data — never commit
 data/sample_transcripts/
@@ -10,3 +12,6 @@ data/sample_transcripts/
 # OS
 .DS_Store
 Thumbs.db
+
+CONTEXT.md
+PATIENT_FLOW.md
