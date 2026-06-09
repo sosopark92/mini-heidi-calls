@@ -142,6 +142,9 @@ def extract_details(task: VoicemailTask) -> VoicemailTask:
     # --- Remaining text fields ---
     task.urgency_reason = data.get("urgency_reason", "")
     task.summary        = data.get("summary", "")
+    # LLM free-generates next_step from the transcript.
+    # Production improvement: replace with a lookup table keyed on (intents, urgency)
+    # to enforce clinic-approved action templates and eliminate hallucination risk.
     task.next_step      = data.get("next_step", "")
 
     # needs_review: OR logic — failure_cases or LLM can independently set it

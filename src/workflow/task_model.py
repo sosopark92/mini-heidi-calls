@@ -31,7 +31,7 @@ class VoicemailTask:
     review_reason: str = ""
 
     # --- Routing ---
-    assigned_to: Optional[str] = None   # on_call_gp | gp | practice_manager | admin
+    assigned_to: Optional[str] = None   # on_call_gp | gp | clinic-manager | admin
 
     # --- Status tracking ---
     status: str = "pending"               # pending | in_progress | done
