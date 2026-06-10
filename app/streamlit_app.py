@@ -21,11 +21,12 @@ URGENCY_BADGE = {
     "normal":   "🔵 NORMAL",
     "low":      "⚫ LOW",
 }
+URGENCY_OPTIONS = ["critical", "high", "normal", "low"]
 ROLE_LABEL = {
-    "on_call_gp":    "On-Call GP",
-    "gp":            "GP",
+    "gp":             "GP",
+    "practice_nurse": "Practice Nurse",
     "clinic-manager": "Clinic Manager",
-    "admin":         "Admin",
+    "admin":          "Admin",
 }
 STATUS_OPTIONS = ["pending", "in_progress", "done"]
 
@@ -40,25 +41,33 @@ if "tasks" not in st.session_state:
 if "status_map" not in st.session_state:
     st.session_state.status_map = {t.id: t.status for t in st.session_state.tasks}
 
+if "urgency_override_map" not in st.session_state:
+    st.session_state.urgency_override_map = {}
+
 tasks: list[VoicemailTask] = st.session_state.tasks
 status_map: dict = st.session_state.status_map
+urgency_override_map: dict = st.session_state.urgency_override_map
 
+_FULL_COLS     = ["Time", "Location", "Urgency", "Safety", "Needs Review", "Caller Type",
+                  "Callback", "Intents", "Summary", "Next Step", "Assigned", "Status"]
 
 def build_df(task_list: list[VoicemailTask]) -> pd.DataFrame:
     rows = []
     for t in task_list:
         rows.append({
-            "_id":           t.id,
-            "Time":          t.received_at.strftime("%H:%M"),
-            "Urgency":       URGENCY_BADGE.get(t.urgency, t.urgency.upper()),
-            "Safety":        t.safety_state,
-            "Needs Review":  "Yes" if t.needs_review else "No",
-            "Caller Type":   "Provider" if t.caller_type == "healthcare_provider" else "Patient",
-            "Callback":      t.callback_number or "—",
-            "Intents":       " + ".join(t.intents),
-            "Summary":       (t.summary[:80] + "…") if len(t.summary) > 80 else t.summary,
-            "Assigned":      ROLE_LABEL.get(t.assigned_to or "", t.assigned_to or "—"),
-            "Status":        status_map.get(t.id, t.status),
+            "_id":          t.id,
+            "Time":         t.received_at.strftime("%H:%M"),
+            "Location":     t.location.title(),
+            "Urgency":      URGENCY_BADGE.get(urgency_override_map.get(t.id, t.urgency), t.urgency.upper()),
+            "Safety":       t.safety_state,
+            "Needs Review": "⚠ Yes" if t.needs_review else "No",
+            "Caller Type":  "Provider" if t.caller_type == "healthcare_provider" else "Patient",
+            "Callback":     t.callback_number or "—",
+            "Intents":      " + ".join(t.intents),
+            "Summary":      (t.summary[:80] + "…") if len(t.summary) > 80 else t.summary,
+            "Next Step":    (t.next_step[:60] + "…") if len(t.next_step) > 60 else t.next_step,
+            "Assigned":     ROLE_LABEL.get(t.assigned_to or "", t.assigned_to or "—"),
+            "Status":       status_map.get(t.id, t.status),
         })
     return pd.DataFrame(rows)
 
@@ -74,30 +83,26 @@ st.markdown(
 
 st.divider()
 
-# ── Metrics ───────────────────────────────────────────────────────────────────
-
-n_urgent     = sum(1 for t in tasks if t.urgency in ("critical", "high"))
-n_review     = sum(1 for t in tasks if t.needs_review)
-n_done       = sum(1 for t in tasks if status_map.get(t.id) == "done")
-n_in_progress = sum(1 for t in tasks if status_map.get(t.id) == "in_progress")
-n_pending    = sum(1 for t in tasks if status_map.get(t.id) == "pending")
-
-r1c1, r1c2, r1c3 = st.columns(3)
-r1c1.metric("🔴 Attend now",   n_urgent)
-r1c2.metric("⚠️ Needs review", n_review)
-r1c3.metric("📬 Total",        len(tasks))
-
-r2c1, r2c2, r2c3 = st.columns(3)
-r2c1.metric("🕐 Pending",      n_pending)
-r2c2.metric("🔄 In Progress",  n_in_progress)
-r2c3.metric("✅ Done",         n_done)
-
-st.divider()
-
 # ── Filters ───────────────────────────────────────────────────────────────────
 
 URGENCY_ALL = ["critical", "high", "normal", "low"]
-ROLE_ALL    = ["on_call_gp", "gp", "clinic-manager", "admin"]
+ROLE_ALL    = ["gp", "practice_nurse", "clinic-manager", "admin"]
+INTENT_ALL  = [
+    "prescription_repeat", "appointment_booking", "appointment_reschedule",
+    "test_results", "medication_concern", "referral_request",
+    "complaint", "general_enquiry", "unclear",
+]
+INTENT_LABEL = {
+    "prescription_repeat":    "Repeat Script",
+    "appointment_booking":    "Appointment Booking",
+    "appointment_reschedule": "Appointment Reschedule",
+    "test_results":           "Test Results",
+    "medication_concern":     "Medication Concern",
+    "referral_request":       "Referral",
+    "complaint":              "Complaint",
+    "general_enquiry":        "General Enquiry",
+    "unclear":                "Unclear",
+}
 
 with st.expander("🔍 Filters"):
     f1, f2, f3 = st.columns(3)
@@ -114,37 +119,195 @@ with st.expander("🔍 Filters"):
         filter_status = st.multiselect(
             "Status", STATUS_OPTIONS, default=STATUS_OPTIONS,
         )
+    f4, _ = st.columns([1, 2])
+    with f4:
+        filter_intent = st.multiselect(
+            "Intent", INTENT_ALL, default=INTENT_ALL,
+            format_func=lambda x: INTENT_LABEL.get(x, x),
+        )
 
 filtered = [
     t for t in tasks
-    if t.urgency in filter_urgency
+    if urgency_override_map.get(t.id, t.urgency) in filter_urgency
     and (t.assigned_to or "admin") in filter_role
     and status_map.get(t.id, t.status) in filter_status
+    and any(i in filter_intent for i in t.intents)
 ]
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+
+n_urgent      = sum(1 for t in filtered if urgency_override_map.get(t.id, t.urgency) in ("critical", "high"))
+n_review      = sum(1 for t in filtered if t.needs_review)
+n_done        = sum(1 for t in filtered if status_map.get(t.id, t.status) == "done")
+n_in_progress = sum(1 for t in filtered if status_map.get(t.id, t.status) == "in_progress")
+n_pending     = sum(1 for t in filtered if status_map.get(t.id, t.status) == "pending")
+
+r1c1, r1c2, r1c3 = st.columns(3)
+r1c1.metric("🔴 Attend now",   n_urgent)
+r1c2.metric("⚠️ Needs review", n_review)
+r1c3.metric("📬 Showing",      len(filtered))
+
+r2c1, r2c2, r2c3 = st.columns(3)
+r2c1.metric("🕐 Pending",      n_pending)
+r2c2.metric("🔄 In Progress",  n_in_progress)
+r2c3.metric("✅ Done",         n_done)
 
 # ── Table ─────────────────────────────────────────────────────────────────────
 
-df = build_df(filtered)
-display_df = df.drop(columns=["_id"])
-
-event = st.dataframe(
-    display_df,
-    use_container_width=True,
-    hide_index=True,
-    on_select="rerun",
-    selection_mode="single-row",
+view_mode = st.radio(
+    "View",
+    ["Full", "Workflow"],
+    horizontal=True,
+    help="Full: all fields · Workflow: grouped by action type",
 )
+
+_COLS_MAP = {"Full": _FULL_COLS}
+
+_WORKFLOW_GROUPS = [
+    (
+        "🚨 Attend First",
+        "Call back immediately — connect to GP or nurse on duty",
+        lambda t: t.urgency == "critical",
+    ),
+    (
+        "📞 Call Back Today",
+        "Review with GP first, then call back and offer same-day appointment",
+        lambda t: t.urgency == "high",
+    ),
+    (
+        "⚠️ Needs Review",
+        "AI could not confidently categorise — review before taking any action",
+        lambda t: t.needs_review,
+    ),
+    (
+        "💊 Repeat Scripts",
+        "Process together — forward to GP for authorisation",
+        lambda t: "prescription_repeat" in t.intents,
+    ),
+    (
+        "📅 Appointments",
+        "Book or reschedule via standard booking system",
+        lambda t: any(i in ("appointment_booking", "appointment_reschedule") for i in t.intents),
+    ),
+    (
+        "📋 Admin & Other",
+        "Handle directly or leave message for appropriate staff",
+        lambda t: t.urgency == "normal",
+    ),
+    (
+        "⚪ Low Priority / Unclear",
+        "Cannot be acted on without further information — set aside for GP review",
+        lambda t: True,
+    ),
+]
+
+_WF_COLS = ["Time", "Urgency", "Intents", "Callback", "Assigned", "Status"]
+
+tab_harbour, tab_sunset, tab_all, tab_needs_review = st.tabs(["🏠 Harbour", "🌅 Sunset", "📋 All", "⚠️ Needs Review"])
+
+
+def render_table(task_list):
+    df = build_df(task_list)
+    display_df = df[_COLS_MAP.get(view_mode, _FULL_COLS)]
+    return df, st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+    )
+
+
+def render_workflow(task_list: list[VoicemailTask], tab_key: str):
+    """Render tasks grouped by action type. Returns (active_df, active_event) for detail panel."""
+    assigned_ids: set[str] = set()
+    result_df = None
+    result_event = None
+
+    for gi, (title, description, condition) in enumerate(_WORKFLOW_GROUPS):
+        group_tasks = [t for t in task_list if condition(t) and t.id not in assigned_ids]
+        for t in group_tasks:
+            assigned_ids.add(t.id)
+
+        count = len(group_tasks)
+        st.markdown(f"#### {title} &nbsp;&nbsp; `{count} task{'s' if count != 1 else ''}`")
+        st.caption(description)
+
+        if not group_tasks:
+            st.success("Nothing here ✓")
+        else:
+            gdf = build_df(group_tasks)
+            display = gdf[[c for c in _WF_COLS if c in gdf.columns]]
+            ev = st.dataframe(
+                display,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=f"wf_{tab_key}_{gi}",
+            )
+            if ev.selection.rows and result_event is None:
+                result_df = gdf
+                result_event = ev
+
+        if gi < len(_WORKFLOW_GROUPS) - 1:
+            st.divider()
+
+    return result_df, result_event
+
+
+active_df = build_df(filtered)
+active_event = None
+
+with tab_harbour:
+    harbour_tasks = [t for t in filtered if t.location == "harbour"]
+    if view_mode == "Workflow":
+        wf_df, wf_event = render_workflow(harbour_tasks, "harbour")
+        if wf_df is not None:
+            active_df, active_event = wf_df, wf_event
+    else:
+        h_df, h_event = render_table(harbour_tasks)
+        if h_event.selection.rows:
+            active_df, active_event = h_df, h_event
+
+with tab_sunset:
+    sunset_tasks = [t for t in filtered if t.location == "sunset"]
+    if view_mode == "Workflow":
+        wf_df, wf_event = render_workflow(sunset_tasks, "sunset")
+        if wf_df is not None:
+            active_df, active_event = wf_df, wf_event
+    else:
+        s_df, s_event = render_table(sunset_tasks)
+        if s_event.selection.rows:
+            active_df, active_event = s_df, s_event
+
+with tab_all:
+    if view_mode == "Workflow":
+        wf_df, wf_event = render_workflow(filtered, "all")
+        if wf_df is not None:
+            active_df, active_event = wf_df, wf_event
+    else:
+        a_df, a_event = render_table(filtered)
+        if a_event.selection.rows:
+            active_df, active_event = a_df, a_event
+
+with tab_needs_review:
+    review_tasks = [t for t in filtered if t.needs_review]
+    r_df, r_event = render_table(review_tasks)
+    if r_event.selection.rows:
+        active_df, active_event = r_df, r_event
 
 # ── Detail panel ──────────────────────────────────────────────────────────────
 
-selected_rows = event.selection.rows
+selected_rows = active_event.selection.rows if active_event else []
 if selected_rows:
     row_idx = selected_rows[0]
-    task_id = df.iloc[row_idx]["_id"]
+    task_id = active_df.iloc[row_idx]["_id"]
     task = next(t for t in tasks if t.id == task_id)
 
     st.divider()
-    header = URGENCY_BADGE.get(task.urgency, task.urgency.upper())
+    current_urgency = urgency_override_map.get(task.id, task.urgency)
+    header = URGENCY_BADGE.get(current_urgency, current_urgency.upper())
     if task.safety_state != "ROUTINE":
         header += f"  · Safety: {task.safety_state}"
     st.markdown(f"### {header}  ·  {task.id}  ·  {task.location.title()} Branch")
@@ -171,6 +334,19 @@ if selected_rows:
         st.markdown(f"- Confidence: `{task.confidence:.2f}`")
         if task.review_reason:
             st.warning(task.review_reason)
+
+        st.markdown("**Urgency**")
+        current_urgency = urgency_override_map.get(task.id, task.urgency)
+        new_urgency = st.selectbox(
+            "urgency",
+            URGENCY_OPTIONS,
+            index=URGENCY_OPTIONS.index(current_urgency),
+            key=f"detail_urgency_{task.id}",
+            label_visibility="collapsed",
+        )
+        if new_urgency != current_urgency:
+            st.session_state.urgency_override_map[task.id] = new_urgency
+            st.rerun()
 
         st.markdown("**Status**")
         current = status_map.get(task.id, task.status)

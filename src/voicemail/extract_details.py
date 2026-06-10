@@ -8,6 +8,8 @@ from groq import Groq
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.workflow.task_model import VoicemailTask
+from src.policy.next_step_router import get_next_step
+from src.utils.llm_call import chat_with_retry
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
@@ -63,7 +65,6 @@ Return ONLY a valid JSON object — no markdown, no explanation:
   "urgency": "<critical | high | normal | low>",
   "urgency_reason": "<one sentence explaining the urgency classification>",
   "summary": "<1-2 sentences covering ALL reasons for the call — not a verbatim transcript>",
-  "next_step": "<one concrete action for clinic admin staff>",
   "needs_review": <true | false>,
   "review_reason": "<why this cannot be acted on confidently, or empty string>"
 }}"""
@@ -103,8 +104,8 @@ def extract_details(task: VoicemailTask) -> VoicemailTask:
     )
 
     try:
-        response = _get_client().chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = chat_with_retry(_get_client(),
+            model=os.environ.get("LLM_MODEL", "llama-3.1-8b-instant"),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=600,
@@ -141,10 +142,7 @@ def extract_details(task: VoicemailTask) -> VoicemailTask:
     # --- Remaining text fields ---
     task.urgency_reason = data.get("urgency_reason", "")
     task.summary        = data.get("summary", "")
-    # LLM free-generates next_step from the transcript.
-    # Production improvement: replace with a lookup table keyed on (intents, urgency)
-    # to enforce clinic-approved action templates and eliminate hallucination risk.
-    task.next_step      = data.get("next_step", "")
+    task.next_step      = get_next_step(task)
 
     # needs_review: OR logic — failure_cases or LLM can independently set it
     if data.get("needs_review", False):

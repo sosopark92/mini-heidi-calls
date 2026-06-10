@@ -1,4 +1,4 @@
-# CONTEXT.md — Mini Heidi Calls: Intelligent Voicemail Triage
+# CONTEXT.md — Mini Heidi Calls: Voicemail Briefing Tool for GP Receptionists
 
 ---
 
@@ -237,11 +237,12 @@ It returns:
   "urgency": "critical | high | normal | low",
   "urgency_reason": "one sentence explaining the urgency classification",
   "summary": "1-2 sentences covering ALL reasons for the call — not a verbatim transcript",
-  "next_step": "one concrete action for admin staff",
   "needs_review": true,
   "review_reason": "why the AI cannot act confidently, or empty string"
 }
 ```
+
+`next_step` is not LLM-generated. After extraction, `next_step_router.py` maps (urgency, safety_state, intents) to a fixed set of clinic-approved receptionist actions — drawn from what receptionists actually do (call back immediately, book same-day, leave GP message, process script, etc.). This eliminates hallucination risk and ensures actions stay within the bounds of what a receptionist can actually carry out.
 
 Note: `caller_type` is collected via IVR keypress before the voicemail is recorded. `callback_number` is captured automatically by CLI (Calling Line Identification) — the network transmits the caller's number without any keypad entry. Neither is extracted by the LLM.
 
@@ -275,14 +276,29 @@ Each intent maps to a routing target in `clinic_policy.yaml`.
 
 ### Dashboard Layout
 
-The dashboard is a flat sorted list — not grouped by intent. All tasks are sorted by urgency first (critical → high → normal → low), then by call time within the same urgency level. A caller with multiple intents appears once, with all intents shown on a single card.
+The dashboard has two view modes:
+
+**Full view** — a flat sorted table with all fields. Useful for searching across everything.
+
+**Workflow view** — tasks grouped by what to do, not just by urgency level. This is the primary mode for the morning briefing.
 
 ```
-Attend first  → critical + high urgency (any intent)
-All calls     → everything else, sorted by time
+🚨 Attend First          critical urgency → call immediately
+📞 Call Back Today        high urgency    → GP review first, then call
+⚠️ Needs GP Review        low confidence  → human decides before any action
+💊 Repeat Scripts         prescription_repeat intent
+📅 Appointments           appointment_booking / reschedule intent
+📋 Admin & Other          normal urgency, everything else
+⚪ Low Priority / Unclear  low urgency, catch-all
 ```
 
-This reflects how admin staff actually work in the morning: highest-risk items first, then everything else in order. A single card shows all reasons a caller rang — no duplicate entries.
+**Why this over a flat sorted list:**
+
+A sorted list still forces context-switching. A critical item, then a prescription repeat, then an appointment change — each requires a different mental mode and different system access. Grouping by action type allows staff to complete all items of one type before moving to the next. Repeat scripts are all processed together. Appointments are all booked together. This is faster and less error-prone.
+
+A staff member who arrives at 7:30 AM sees the number of items in each group before reading any individual task. Two items in "Attend First" and zero items in "Needs GP Review" is a completely different morning than two items in each.
+
+Location tabs (Harbour / Sunset / All) allow a receptionist to work through their own branch first before handling the other location's calls.
 
 ---
 
@@ -299,43 +315,29 @@ clinic:
   name: Harbour to Sunset GP
 
 roles:
-  on_call_gp:       "On-call GP — contact immediately"
-  gp:               "GP — review before callback"
-  practice_manager: "Practice Manager"
-  admin:            "Admin"
+  gp:             "GP — review before callback"
+  practice_nurse: "Practice Nurse"
+  clinic-manager: "Clinic Manager"
+  admin:          "Admin"
 
 routing_rules:
-  - match:
-      urgency: critical
-    assign_to: on_call_gp
-    reason: "Critical urgency — on-call GP must be contacted before clinic opens"
-
-  - match:
-      safety_state: [ACTIVE, WATCH]
-    assign_to: gp
-    reason: "Clinical concern flagged — GP should review before any callback is made"
-
-  - match:
-      urgency: high
-    assign_to: gp
-    reason: "High urgency — GP review recommended"
-
-  - match:
-      any_intent: medication_concern
-    assign_to: gp
-    reason: "Medication concern — GP should advise on response"
-
-  - match:
-      any_intent: complaint
-    assign_to: practice_manager
-    reason: "Formal complaint — escalate to practice manager"
-
-  - default: true
-    assign_to: admin
-    reason: "Routine call — admin can handle directly"
+  - match: {urgency: critical}         → gp
+  - match: {safety_state: [ACTIVE, WATCH]} → gp
+  - match: {urgency: high}             → gp
+  - match: {any_intent: medication_concern} → gp
+  - match: {any_intent: referral_request}   → gp
+  - match: {any_intent: test_results}       → gp
+  - match: {any_intent: complaint}          → clinic-manager
+  - match: {any_intent: appointment_booking} → practice_nurse
+  - match: {any_intent: prescription_repeat} → practice_nurse
+  - default                            → admin
 ```
 
-Rules are evaluated in order. First match wins. Routing is role-based, not branch-based — both clinic locations have the same staff types. `task.location` already records which branch received the call; `task.assigned_to` records which role should handle it.
+Rules are evaluated in order. First match wins. This means a high-urgency appointment request goes to GP (urgency rule fires first), not Practice Nurse (intent rule would fire later).
+
+**Practice Nurse routing:** In Australian GP clinics, practice nurses run nurse-led clinics for immunisations, chronic disease management reviews, wound care, and health assessments. These do not require GP involvement to book — the nurse coordinates directly. Prescription repeats flow through the practice nurse for processing, then to the GP for authorisation sign-off.
+
+Routing is role-based, not branch-based — both clinic locations use the same staff types. `task.location` records which branch received the call; `task.assigned_to` records which role should handle it.
 
 ---
 
@@ -362,34 +364,30 @@ Every failure mode must be detected, labelled, and surfaced honestly. This is th
 
 ### Why Specific Coverage Matters
 
-Mock data is not filler. It is the test suite for the triage logic. If the system handles the 10 mock records correctly, it demonstrates handling of all major categories including edge cases.
+Mock data is not filler. It is the test suite for the triage logic. The 20 records cover every routing path, every role assignment, and the key edge cases the safety layer must handle correctly.
 
-`data/mock_voicemails.csv` columns:
+`data/mock_voicemails.csv` — 20 records:
 
-```
-id, received_at, location, duration_sec, caller_type, callback_number, transcript,
-audio_path, intent, urgency, safety_state, summary, next_step,
-confidence, needs_review, review_reason
-```
+| Category | Count | Assigned to | Example |
+|---|---|---|---|
+| Critical / ACTIVE | 2 | GP | Chest pain, unrelieved angina spray; severe low mood |
+| High / WATCH | 3 | GP | Resolved chest tightness (cardiac history); child fever; Warfarin running out |
+| Medication concern | 1 | GP | Metformin side effect query |
+| Test results chasing | 1 | GP | Blood test results not received |
+| Referral follow-up | 1 | GP | Specialist requesting clinical notes |
+| Prescription repeat | 3 | Practice Nurse | Levlen, Perindopril, Rosuvastatin |
+| Appointment booking | 3 | Practice Nurse | Flu vaccination; wound check; diabetes review |
+| Appointment reschedule | 1 | Admin | Cannot make Thursday appointment |
+| Complaint | 1 | Clinic Manager | Wait time complaint |
+| General enquiry | 2 | Admin | Long weekend hours; bulk billing |
+| Unclear / pocket dial | 2 | (needs_review) | No callback number; no speech |
 
-Required records:
+**Key design decisions in the mock data:**
 
-| #   | Scenario                                                                       | Expected urgency | Expected intent        |
-| --- | ------------------------------------------------------------------------------ | ---------------- | ---------------------- |
-| 1   | Essential BP medication ran out today, currently dizzy, known cardiac history  | critical         | medication_concern     |
-| 2   | Chest tightness last night (resolved), cardiac history                         | high             | general_enquiry        |
-| 3   | Repeat contraceptive pill                                                      | normal           | prescription_repeat    |
-| 4   | Healthcare provider — referral notes request                                   | normal           | referral_request       |
-| 5   | Reschedule tomorrow's appointment                                              | normal           | appointment_reschedule |
-| 6   | New patient — initial appointment booking                                      | normal           | appointment_booking    |
-| 7   | Chasing blood test results                                                     | normal           | test_results           |
-| 8   | Complaint about billing                                                        | normal           | complaint              |
-| 9   | No callback number, unclear intent                                             | low              | unclear                |
-| 10  | Pocket dial, no speech                                                         | low              | unclear                |
-
-**Note on record #1:** This represents the rare exception that the safety layer is designed to catch. A patient with a cardiac history who has run out of an essential antihypertensive and is currently symptomatic (dizzy, headache) would realistically leave a GP voicemail — they are not at an emergency threshold requiring 000, but they need urgent attention before clinic opens. This is exactly the case that would be buried unnoticed in a chronological voicemail list.
-
-**Note on most mornings:** Records #3–#8 represent a typical overnight inbox — routine administrative calls with no clinical concern. The system's value on those mornings is the speed and clarity of grouping, not the presence of urgent flags.
+- Critical records use natural, indirect language ("I've been feeling really off", "just can't go on") — not "I am having a medical emergency". This tests that the safety layer catches real patient language.
+- WATCH records involve resolved symptoms with relevant history — the system must distinguish "chest pain happening now" from "chest pain last night that went away".
+- Practice Nurse cases use appointment types that genuinely belong to nurse-led clinics: vaccination, wound care, chronic disease management. These are direct bookings — no GP involvement required.
+- Warfarin running out is routed to GP (not Practice Nurse) despite being medication-related — the WATCH safety state fires first in the routing rules, correctly prioritising clinical risk over intent category.
 
 ---
 
@@ -530,12 +528,12 @@ Groq Whisper is an API call — one line of code, no hardware dependency, and fa
 ```
 mini-heidi-calls/
 ├── app/
-│   └── streamlit_app.py           # dashboard entry point
+│   └── streamlit_app.py           # dashboard — Workflow view, location tabs, detail panel, simulation mode
 │
 ├── src/
 │   ├── voicemail/
 │   │   ├── load_voicemails.py     # loads and validates CSV → list[VoicemailTask]
-│   │   ├── triage_pipeline.py     # orchestrates all pipeline steps
+│   │   ├── triage_pipeline.py     # orchestrates all pipeline steps (parallel, with retry)
 │   │   └── extract_details.py     # LLM structured extraction (intents, urgency, summary)
 │   │
 │   ├── safety/
@@ -545,22 +543,22 @@ mini-heidi-calls/
 │   │   └── failure_cases.py       # detects pocket dials, missing numbers, cutoffs
 │   │
 │   ├── policy/
-│   │   ├── clinic_policy.yaml     # role-based routing rules (editable)
-│   │   └── policy_router.py       # applies YAML rules → sets task.assigned_to
+│   │   ├── clinic_policy.yaml     # role-based routing rules (editable without code changes)
+│   │   ├── policy_router.py       # applies YAML rules → sets task.assigned_to
+│   │   └── next_step_router.py    # maps (urgency, safety_state, intents) → fixed receptionist action
+│   │
+│   ├── utils/
+│   │   └── llm_call.py            # chat_with_retry — exponential backoff on rate limit errors
 │   │
 │   └── workflow/
 │       └── task_model.py          # VoicemailTask dataclass
 │
 ├── data/
-│   └── mock_voicemails.csv        # 10 test records across all categories
-│
-├── tests/
-│   ├── test_safety.py
-│   ├── test_confidence.py
-│   └── test_triage_pipeline.py
+│   └── mock_voicemails.csv        # 20 records covering all routing paths and edge cases
 │
 ├── README.md
 ├── CONTEXT.md
+├── PATIENT_FLOW.md
 └── requirements.txt
 ```
 
@@ -601,7 +599,7 @@ class VoicemailTask:
     review_reason: str = ""
 
     # --- Routing ---
-    assigned_to: Optional[str] = None    # on_call_gp | gp | practice_manager | admin
+    assigned_to: Optional[str] = None    # gp | practice_nurse | clinic-manager | admin
 
     # --- Status tracking ---
     status: str = "pending"               # pending | in_progress | done
@@ -684,8 +682,9 @@ Goal: features that make the demo compelling and complete.
 - [x] Simulation mode — paste any transcript in sidebar, see live output
 - [x] Detail view — full transcript, confidence breakdown, urgency reason
 - [x] Status tracking — Pending → In Progress → Done, persisted in session
-- [ ] Tests — `test_safety.py`, `test_confidence.py`, `test_triage_pipeline.py`
-- [ ] README — setup instructions, scenario walkthrough
+- [x] README — setup instructions, routing table, mock data summary
+- [x] CONTEXT.md — design decisions, architecture, data model
+- [x] PATIENT_FLOW.md — end-to-end journey, automated vs human boundary
 
 Deliverable: complete, polished prototype ready for submission.
 

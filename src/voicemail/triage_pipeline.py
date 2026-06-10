@@ -63,7 +63,7 @@ def run_pipeline(tasks: list[VoicemailTask], verbose: bool = True) -> list[Voice
     timings: list[float] = []
     wall_start = time.perf_counter()
 
-    with ThreadPoolExecutor(max_workers=total) as executor:
+    with ThreadPoolExecutor(max_workers=min(5, total)) as executor:
         futures = {
             executor.submit(_process_one, task, i, total, verbose): task
             for i, task in enumerate(tasks, 1)

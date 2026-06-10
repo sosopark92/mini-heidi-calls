@@ -7,6 +7,7 @@ from groq import Groq
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.workflow.task_model import VoicemailTask
+from src.utils.llm_call import chat_with_retry
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
@@ -49,8 +50,8 @@ def screen_for_safety(task: VoicemailTask) -> bool:
 
     prompt = _SCREEN_PROMPT.format(transcript=task.transcript)
 
-    response = _get_client().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    response = chat_with_retry(_get_client(),
+        model=os.environ.get("LLM_MODEL", "llama-3.1-8b-instant"),
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
         max_tokens=5,
