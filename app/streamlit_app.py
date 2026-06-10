@@ -1,9 +1,18 @@
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+
+# Inject Streamlit Cloud secrets into os.environ so downstream code works unchanged
+for _key in ["GROQ_API_KEY", "LLM_MODEL"]:
+    try:
+        if _key in st.secrets and _key not in os.environ:
+            os.environ[_key] = st.secrets[_key]
+    except Exception:
+        pass
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.voicemail.load_voicemails import load_voicemails
