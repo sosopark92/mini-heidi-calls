@@ -12,3 +12,6 @@ data/sample_transcripts/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+_filter_msg.py
