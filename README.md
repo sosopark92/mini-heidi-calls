@@ -4,6 +4,8 @@ A morning briefing tool for GP clinic receptionists. Processes overnight voicema
 
 Built for the Heidi Health Forward-Deployed Engineer challenge.
 
+**[Live demo → mini-heidi-calls.streamlit.app](https://mini-heidi-calls.streamlit.app/)**
+
 ---
 
 ## The Problem
