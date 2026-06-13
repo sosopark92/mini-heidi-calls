@@ -135,25 +135,24 @@ filtered = [
     and any(i in filter_intent for i in t.intents)
 ]
 
-# ── Metrics ───────────────────────────────────────────────────────────────────
-
-n_urgent      = sum(1 for t in filtered if urgency_override_map.get(t.id, t.urgency) in ("critical", "high"))
-n_review      = sum(1 for t in filtered if t.needs_review)
-n_done        = sum(1 for t in filtered if status_map.get(t.id, t.status) == "done")
-n_in_progress = sum(1 for t in filtered if status_map.get(t.id, t.status) == "in_progress")
-n_pending     = sum(1 for t in filtered if status_map.get(t.id, t.status) == "pending")
-
-r1c1, r1c2, r1c3 = st.columns(3)
-r1c1.metric("🔴 Attend now",   n_urgent)
-r1c2.metric("⚠️ Needs review", n_review)
-r1c3.metric("📬 Showing",      len(filtered))
-
-r2c1, r2c2, r2c3 = st.columns(3)
-r2c1.metric("🕐 Pending",      n_pending)
-r2c2.metric("🔄 In Progress",  n_in_progress)
-r2c3.metric("✅ Done",         n_done)
-
 # ── Table ─────────────────────────────────────────────────────────────────────
+
+def render_metrics(task_list: list[VoicemailTask]):
+    n_urgent      = sum(1 for t in task_list if urgency_override_map.get(t.id, t.urgency) in ("critical", "high"))
+    n_review      = sum(1 for t in task_list if t.needs_review)
+    n_done        = sum(1 for t in task_list if status_map.get(t.id, t.status) == "done")
+    n_in_progress = sum(1 for t in task_list if status_map.get(t.id, t.status) == "in_progress")
+    n_pending     = sum(1 for t in task_list if status_map.get(t.id, t.status) == "pending")
+
+    r1c1, r1c2, r1c3 = st.columns(3)
+    r1c1.metric("🔴 Attend now",   n_urgent)
+    r1c2.metric("⚠️ Needs review", n_review)
+    r1c3.metric("📬 Showing",      len(task_list))
+
+    r2c1, r2c2, r2c3 = st.columns(3)
+    r2c1.metric("🕐 Pending",      n_pending)
+    r2c2.metric("🔄 In Progress",  n_in_progress)
+    r2c3.metric("✅ Done",         n_done)
 
 view_mode = st.radio(
     "View",
@@ -199,7 +198,7 @@ _WORKFLOW_GROUPS = [
 
 _WF_COLS = ["Time", "Urgency", "Intents", "Callback", "Assigned", "Status"]
 
-tab_harbour, tab_sunset, tab_all, tab_needs_review = st.tabs(["🏠 Harbour", "🌅 Sunset", "📋 All", "⚠️ Needs Review"])
+tab_all, tab_harbour, tab_sunset, tab_needs_review = st.tabs(["📋 All", "🏠 Harbour", "🌅 Sunset", "⚠️ Needs Review"])
 
 
 def render_table(task_list):
@@ -257,6 +256,8 @@ active_event = None
 
 with tab_harbour:
     harbour_tasks = [t for t in filtered if t.location == "harbour"]
+    render_metrics(harbour_tasks)
+    st.divider()
     if view_mode == "Workflow":
         wf_df, wf_event = render_workflow(harbour_tasks, "harbour")
         if wf_df is not None:
@@ -268,6 +269,8 @@ with tab_harbour:
 
 with tab_sunset:
     sunset_tasks = [t for t in filtered if t.location == "sunset"]
+    render_metrics(sunset_tasks)
+    st.divider()
     if view_mode == "Workflow":
         wf_df, wf_event = render_workflow(sunset_tasks, "sunset")
         if wf_df is not None:
@@ -278,6 +281,8 @@ with tab_sunset:
             active_df, active_event = s_df, s_event
 
 with tab_all:
+    render_metrics(filtered)
+    st.divider()
     if view_mode == "Workflow":
         wf_df, wf_event = render_workflow(filtered, "all")
         if wf_df is not None:
@@ -289,9 +294,16 @@ with tab_all:
 
 with tab_needs_review:
     review_tasks = [t for t in filtered if t.needs_review]
-    r_df, r_event = render_table(review_tasks)
-    if r_event.selection.rows:
-        active_df, active_event = r_df, r_event
+    render_metrics(review_tasks)
+    st.divider()
+    if view_mode == "Workflow":
+        wf_df, wf_event = render_workflow(review_tasks, "review")
+        if wf_df is not None:
+            active_df, active_event = wf_df, wf_event
+    else:
+        r_df, r_event = render_table(review_tasks)
+        if r_event.selection.rows:
+            active_df, active_event = r_df, r_event
 
 # ── Detail panel ──────────────────────────────────────────────────────────────
 

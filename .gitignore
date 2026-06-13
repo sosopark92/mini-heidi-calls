@@ -15,3 +15,8 @@ Thumbs.db
 
 # Logs
 _filter_msg.py
+
+# Internal docs
+CONTEXT.md
+PATIENT_FLOW.md
+VIDEO_SCRIPT.md
