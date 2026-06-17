@@ -72,8 +72,14 @@ Return ONLY a valid JSON object — no markdown, no explanation:
 
 def _get_client() -> Groq:
     global _client
+
     if _client is None:
-        _client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        _client = Groq(
+            api_key=os.environ["GROQ_API_KEY"],
+            max_retries=0,
+            timeout=30.0,
+        )
+
     return _client
 
 

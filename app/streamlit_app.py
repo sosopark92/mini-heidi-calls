@@ -8,7 +8,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.voicemail.load_voicemails import load_voicemails
-from src.voicemail.triage_pipeline import run_pipeline
+# from src.voicemail.triage_pipeline import run_pipeline
 from src.policy.policy_router import assign_role
 from src.workflow.task_model import VoicemailTask
 
@@ -35,9 +35,14 @@ STATUS_OPTIONS = ["pending", "in_progress", "done"]
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
 if "tasks" not in st.session_state:
-    with st.spinner("Running triage pipeline on overnight voicemails…"):
-        raw = load_voicemails(str(CSV_PATH))
-        st.session_state.tasks = run_pipeline(raw, verbose=False)
+    # Load preprocessed demonstration results.
+    # The live LLM pipeline remains available through Simulation mode.
+    raw = load_voicemails(str(CSV_PATH))
+
+    for task in raw:
+        assign_role(task)
+
+    st.session_state.tasks = raw
 
 if "status_map" not in st.session_state:
     st.session_state.status_map = {t.id: t.status for t in st.session_state.tasks}
@@ -187,7 +192,7 @@ _WORKFLOW_GROUPS = [
     (
         "📋 Admin & Other",
         "Handle directly or leave message for appropriate staff",
-        lambda t: t.urgency == "normal",
+        lambda t: t.urgency == "normal" and "unclear" not in t.intents,
     ),
     (
         "⚪ Low Priority / Unclear",
@@ -196,7 +201,7 @@ _WORKFLOW_GROUPS = [
     ),
 ]
 
-_WF_COLS = ["Time", "Urgency", "Intents", "Callback", "Assigned", "Status"]
+_WF_COLS = ["Time", "Location", "Urgency", "Intents", "Callback", "Assigned", "Status"]
 
 tab_all, tab_harbour, tab_sunset, tab_needs_review = st.tabs(["📋 All", "🏠 Harbour", "🌅 Sunset", "⚠️ Needs Review"])
 
@@ -400,25 +405,38 @@ with st.sidebar:
         )
 
         with st.spinner("Analysing…"):
-            detect_failure_cases(sim_task)
-            if len(sim_task.transcript.split()) >= 5:
-                flagged = screen_for_safety(sim_task)
-                if flagged:
-                    check_safety_context(sim_task)
-                extract_details(sim_task)
-                calculate_confidence(sim_task)
-            assign_role(sim_task)
+            try:
+                detect_failure_cases(sim_task)
 
-        st.divider()
-        st.markdown("**Result**")
-        st.markdown(f"- Intents: `{'  +  '.join(sim_task.intents)}`")
-        st.markdown(f"- Urgency: `{sim_task.urgency}`")
-        st.markdown(f"- Safety: `{sim_task.safety_state}`")
-        st.markdown(f"- Assigned to: **{ROLE_LABEL.get(sim_task.assigned_to or '', '—')}**")
-        st.markdown(f"- Confidence: `{sim_task.confidence:.2f}`")
-        st.markdown(f"- Needs review: `{sim_task.needs_review}`")
-        if sim_task.summary:
-            st.markdown("**Summary**")
-            st.markdown(sim_task.summary)
-        if sim_task.next_step:
-            st.info(f"**→** {sim_task.next_step}")
+                if len(sim_task.transcript.split()) >= 5:
+                    flagged = screen_for_safety(sim_task)
+
+                    if flagged:
+                        check_safety_context(sim_task)
+
+                    extract_details(sim_task)
+
+                calculate_confidence(sim_task)
+                assign_role(sim_task)
+
+            except Exception as exc:
+                st.error(
+                    "The live AI service is temporarily unavailable. "
+                    "Please wait briefly and try again."
+                )
+                st.caption(f"Technical error: {type(exc).__name__}")
+                st.stop()
+
+            st.divider()
+            st.markdown("**Result**")
+            st.markdown(f"- Intents: `{'  +  '.join(sim_task.intents)}`")
+            st.markdown(f"- Urgency: `{sim_task.urgency}`")
+            st.markdown(f"- Safety: `{sim_task.safety_state}`")
+            st.markdown(f"- Assigned to: **{ROLE_LABEL.get(sim_task.assigned_to or '', '—')}**")
+            st.markdown(f"- Confidence: `{sim_task.confidence:.2f}`")
+            st.markdown(f"- Needs review: `{sim_task.needs_review}`")
+            if sim_task.summary:
+                st.markdown("**Summary**")
+                st.markdown(sim_task.summary)
+            if sim_task.next_step:
+                st.info(f"**→** {sim_task.next_step}")

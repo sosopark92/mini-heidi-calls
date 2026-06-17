@@ -4,12 +4,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.workflow.task_model import VoicemailTask
 
-_DISTRESS_KEYWORDS = [
-    "can't cope", "cannot cope", "really scared", "terrified",
-    "absolutely furious", "totally unacceptable", "this is ridiculous",
-    "i'll sue", "threatening", "disgusting", "outrageous",
-]
-
 _CLOSING_WORDS = {"bye", "thanks", "thank you", "cheers", "goodbye"}
 
 
@@ -41,13 +35,6 @@ def detect_failure_cases(task: VoicemailTask) -> VoicemailTask:
     if non_ascii_ratio > 0.3:
         task.needs_review = True
         reasons.append("Non-English content detected")
-
-    # 5. Distressed or angry tone
-    lower = task.transcript.lower()
-    if any(kw in lower for kw in _DISTRESS_KEYWORDS):
-        if task.urgency not in ("critical", "high"):
-            task.urgency = "high"
-        reasons.append("Distressed or angry tone detected")
 
     if reasons:
         existing = task.review_reason.strip(" |") if task.review_reason else ""
