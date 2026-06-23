@@ -146,10 +146,3 @@ Defined in `src/policy/clinic_policy.yaml` — editable without touching code.
 | Dashboard       | Streamlit                     |
 | Policy config   | YAML                          |
 | Data model      | Python dataclass              |
-
----
-
-## Further Reading
-
-- [CONTEXT.md](CONTEXT.md) — full design reasoning, architecture, and decision log
-- [PATIENT_FLOW.md](PATIENT_FLOW.md) — end-to-end journey from voicemail to resolved action
